@@ -1,8 +1,9 @@
 {
-  "name": "browserbase-sse-server",
+  "name": "browserbase-mcp-server",
   "version": "1.0.0",
-  "type": "module",
+  "description": "Servidor MCP con Browserbase y SSE",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
