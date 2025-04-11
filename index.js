@@ -1,3 +1,4 @@
+// index.js
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -98,6 +99,37 @@ app.get('/sse', async (req, res) => {
   } catch (err) {
     console.error('Error ejecutando tool:', err.message);
     res.status(500).json({ error: 'Error ejecutando herramienta' });
+  }
+});
+
+// 🔹 POST /execute - Ejecuta tool y devuelve todo el resultado (sin streaming)
+app.post('/execute', async (req, res) => {
+  const { browserbase_api_key, browserbase_project_id, tool_id, messages } = req.body;
+
+  if (!browserbase_api_key || !browserbase_project_id || !tool_id || !messages) {
+    return res.status(400).json({ error: 'Faltan parámetros: api_key, project_id, tool_id o messages' });
+  }
+
+  try {
+    const response = await axios({
+      method: 'POST',
+      url: 'https://api.browserbase.com/v1/chat/completions',
+      headers: {
+        Authorization: `Bearer ${browserbase_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      data: {
+        project_id: browserbase_project_id,
+        tool_id,
+        stream: false,
+        messages
+      }
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('Error en ejecución sin stream:', err.message);
+    res.status(500).json({ error: 'Error al ejecutar la herramienta sin stream' });
   }
 });
 
