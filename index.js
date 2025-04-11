@@ -1,7 +1,7 @@
 // index.js
 import express from 'express';
 import cors from 'cors';
-import axios from 'axios';
+import { Browserbase } from 'browserbase';
 
 const app = express();
 app.use(cors());
@@ -18,28 +18,11 @@ app.get('/tools', async (req, res) => {
   }
 
   try {
-    const response = await axios.get(
-      `https://api.browserbase.com/v1/projects/${browserbase_project_id}/tools`,
-      {
-        headers: {
-          Authorization: `Bearer ${browserbase_api_key}`,
-        },
-      }
-    );
-
-    res.json(response.data);
+    const bb = new Browserbase({ apiKey: browserbase_api_key });
+    const tools = await bb.tools.list({ projectId: browserbase_project_id });
+    res.json(tools);
   } catch (err) {
-    if (err.response) {
-      console.error('❌ Error al obtener tools (response):', {
-        status: err.response.status,
-        data: err.response.data,
-        headers: err.response.headers
-      });
-    } else if (err.request) {
-      console.error('❌ Error al obtener tools (no response):', err.request);
-    } else {
-      console.error('❌ Error al obtener tools (setup):', err.message);
-    }
+    console.error('❌ Error al obtener tools:', err);
     res.status(500).json({ error: 'Error al listar herramientas', detail: err.message });
   }
 });
@@ -57,22 +40,15 @@ app.get('/sse', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const response = await axios({
-      method: 'POST',
-      url: 'https://api.browserbase.com/v1/chat/completions',
-      headers: {
-        Authorization: `Bearer ${browserbase_api_key}`,
-        'Content-Type': 'application/json'
-      },
-      responseType: 'stream',
-      data: {
-        project_id: browserbase_project_id,
-        tool_id,
-        stream: true
-      }
+    const bb = new Browserbase({ apiKey: browserbase_api_key });
+
+    const stream = await bb.chat.completions.stream({
+      projectId: browserbase_project_id,
+      toolId: tool_id,
+      messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }]
     });
 
-    response.data.on('data', (chunk) => {
+    stream.on('data', (chunk) => {
       const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
       for (const line of lines) {
         if (line === 'data: [DONE]') {
@@ -94,8 +70,8 @@ app.get('/sse', async (req, res) => {
       }
     });
 
-    response.data.on('end', () => res.end());
-    response.data.on('error', (err) => {
+    stream.on('end', () => res.end());
+    stream.on('error', (err) => {
       console.error('Error en streaming:', err.message);
       res.write(`event: error\ndata: ${err.message}\n\n`);
       res.end();
@@ -107,7 +83,7 @@ app.get('/sse', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error ejecutando tool:', err.response?.data || err.message);
+    console.error('Error ejecutando tool:', err);
     res.status(500).json({ error: 'Error ejecutando herramienta' });
   }
 });
@@ -121,24 +97,17 @@ app.post('/execute', async (req, res) => {
   }
 
   try {
-    const response = await axios({
-      method: 'POST',
-      url: 'https://api.browserbase.com/v1/chat/completions',
-      headers: {
-        Authorization: `Bearer ${browserbase_api_key}`,
-        'Content-Type': 'application/json'
-      },
-      data: {
-        project_id: browserbase_project_id,
-        tool_id,
-        stream: false,
-        messages
-      }
+    const bb = new Browserbase({ apiKey: browserbase_api_key });
+    const result = await bb.chat.completions.create({
+      projectId: browserbase_project_id,
+      toolId: tool_id,
+      stream: false,
+      messages
     });
 
-    res.json(response.data);
+    res.json(result);
   } catch (err) {
-    console.error('Error en ejecución sin stream:', err.response?.data || err.message);
+    console.error('Error en ejecución sin stream:', err);
     res.status(500).json({ error: 'Error al ejecutar la herramienta sin stream' });
   }
 });
