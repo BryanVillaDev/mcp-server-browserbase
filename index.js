@@ -1,13 +1,13 @@
 // index.js
 import express from 'express';
 import cors from 'cors';
-import { Browserbase } from 'browserbase';
+import { Browserbase } from '@browserbasehq/sdk';
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
 
 // 🔹 GET /tools - Lista tools del proyecto
 app.get('/tools', async (req, res) => {
@@ -18,8 +18,8 @@ app.get('/tools', async (req, res) => {
   }
 
   try {
-    const bb = new Browserbase({ apiKey: browserbase_api_key });
-    const tools = await bb.tools.list({ projectId: browserbase_project_id });
+    const bb = new Browserbase(browserbase_api_key);
+    const tools = await bb.tools.list(browserbase_project_id);
     res.json(tools);
   } catch (err) {
     console.error('❌ Error al obtener tools:', err);
@@ -40,42 +40,26 @@ app.get('/sse', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const bb = new Browserbase({ apiKey: browserbase_api_key });
+    const bb = new Browserbase(browserbase_api_key);
 
-    const stream = await bb.chat.completions.stream({
+    const stream = await bb.chat.stream({
       projectId: browserbase_project_id,
       toolId: tool_id,
       messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }]
     });
 
-    stream.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
-      for (const line of lines) {
-        if (line === 'data: [DONE]') {
-          res.write(`event: done\ndata: [DONE]\n\n`);
-          res.end();
-          return;
-        }
-
-        const message = line.replace(/^data: /, '');
-        try {
-          const parsed = JSON.parse(message);
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            res.write(`data: ${content}\n\n`);
-          }
-        } catch (err) {
-          console.error('Error parsing JSON:', err.message);
-        }
+    for await (const message of stream) {
+      if (message === '[DONE]') {
+        res.write(`event: done\ndata: [DONE]\n\n`);
+        res.end();
+        return;
       }
-    });
 
-    stream.on('end', () => res.end());
-    stream.on('error', (err) => {
-      console.error('Error en streaming:', err.message);
-      res.write(`event: error\ndata: ${err.message}\n\n`);
-      res.end();
-    });
+      const content = message?.choices?.[0]?.delta?.content;
+      if (content) {
+        res.write(`data: ${content}\n\n`);
+      }
+    }
 
     req.on('close', () => {
       console.log('Cliente cerró la conexión');
@@ -84,11 +68,11 @@ app.get('/sse', async (req, res) => {
 
   } catch (err) {
     console.error('Error ejecutando tool:', err);
-    res.status(500).json({ error: 'Error ejecutando herramienta' });
+    res.status(500).json({ error: 'Error ejecutando herramienta', detail: err.message });
   }
 });
 
-// 🔹 POST /execute - Ejecuta tool y devuelve todo el resultado (sin streaming)
+// 🔹 POST /execute - Ejecuta tool y devuelve todo el resultado
 app.post('/execute', async (req, res) => {
   const { browserbase_api_key, browserbase_project_id, tool_id, messages } = req.body;
 
@@ -97,21 +81,21 @@ app.post('/execute', async (req, res) => {
   }
 
   try {
-    const bb = new Browserbase({ apiKey: browserbase_api_key });
-    const result = await bb.chat.completions.create({
+    const bb = new Browserbase(browserbase_api_key);
+
+    const result = await bb.chat.run({
       projectId: browserbase_project_id,
       toolId: tool_id,
-      stream: false,
       messages
     });
 
     res.json(result);
   } catch (err) {
     console.error('Error en ejecución sin stream:', err);
-    res.status(500).json({ error: 'Error al ejecutar la herramienta sin stream' });
+    res.status(500).json({ error: 'Error al ejecutar la herramienta sin stream', detail: err.message });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🧠 MCP Browserbase SSE corriendo en http://localhost:${PORT}`);
+  console.log(`🧠 MCP Browserbase corriendo en http://localhost:${PORT}`);
 });
