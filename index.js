@@ -29,7 +29,7 @@ app.get('/tools', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('Error al obtener tools:', err.message);
+    console.error('Error al obtener tools:', err.response?.data || err.message);
     res.status(500).json({ error: 'Error al listar herramientas' });
   }
 });
@@ -97,7 +97,7 @@ app.get('/sse', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error ejecutando tool:', err.message);
+    console.error('Error ejecutando tool:', err.response?.data || err.message);
     res.status(500).json({ error: 'Error ejecutando herramienta' });
   }
 });
@@ -128,7 +128,7 @@ app.post('/execute', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('Error en ejecución sin stream:', err.message);
+    console.error('Error en ejecución sin stream:', err.response?.data || err.message);
     res.status(500).json({ error: 'Error al ejecutar la herramienta sin stream' });
   }
 });
