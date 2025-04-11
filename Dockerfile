@@ -1,20 +1,17 @@
-# Imagen base con Node.js
-FROM node:20-alpine
+# Imagen base con soporte para Node 18
+FROM node:18
 
-# Crear directorio de la app
+# Crear y usar directorio de trabajo
 WORKDIR /app
 
-# Copiar package.json y package-lock.json
-COPY package*.json ./
+# Copiar los archivos del proyecto
+COPY . .
 
 # Instalar dependencias
 RUN npm install
 
-# Copiar el código fuente
-COPY . .
-
-# Exponer el puerto
+# Exponer el puerto en el que corre Express
 EXPOSE 3000
 
-# Comando por defecto
+# Comando para iniciar el servidor
 CMD ["npm", "start"]
