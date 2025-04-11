@@ -29,8 +29,18 @@ app.get('/tools', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('Error al obtener tools:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Error al listar herramientas' });
+    if (err.response) {
+      console.error('❌ Error al obtener tools (response):', {
+        status: err.response.status,
+        data: err.response.data,
+        headers: err.response.headers
+      });
+    } else if (err.request) {
+      console.error('❌ Error al obtener tools (no response):', err.request);
+    } else {
+      console.error('❌ Error al obtener tools (setup):', err.message);
+    }
+    res.status(500).json({ error: 'Error al listar herramientas', detail: err.message });
   }
 });
 
