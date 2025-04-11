@@ -3,21 +3,44 @@ import cors from 'cors';
 import axios from 'axios';
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-
-app.get('/sse', async (req, res) => {
-  const browserbase_api_key = req.query.browserbase_api_key;
-  const browserbase_project_id = req.query.browserbase_project_id;
-  const prompt = req.query.prompt || 'Hola, ¿en qué puedo ayudarte?';
+// 🔹 GET /tools - Lista tools del proyecto
+app.get('/tools', async (req, res) => {
+  const { browserbase_api_key, browserbase_project_id } = req.query;
 
   if (!browserbase_api_key || !browserbase_project_id) {
-    res.status(400).json({ error: 'Faltan parámetros: api_key o project_id' });
-    return;
+    return res.status(400).json({ error: 'Faltan parámetros: api_key o project_id' });
   }
 
-  // Encabezados necesarios para SSE
+  try {
+    const response = await axios.get(
+      `https://api.browserbase.com/v1/projects/${browserbase_project_id}/tools`,
+      {
+        headers: {
+          Authorization: `Bearer ${browserbase_api_key}`,
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('Error al obtener tools:', err.message);
+    res.status(500).json({ error: 'Error al listar herramientas' });
+  }
+});
+
+// 🔹 GET /sse - Ejecuta tool y responde en tiempo real
+app.get('/sse', async (req, res) => {
+  const { browserbase_api_key, browserbase_project_id, tool_id } = req.query;
+
+  if (!browserbase_api_key || !browserbase_project_id || !tool_id) {
+    return res.status(400).json({ error: 'Faltan parámetros: api_key, project_id o tool_id' });
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -33,15 +56,13 @@ app.get('/sse', async (req, res) => {
       responseType: 'stream',
       data: {
         project_id: browserbase_project_id,
-        messages: [
-          { role: 'user', content: prompt }
-        ],
+        tool_id,
         stream: true
       }
     });
 
     response.data.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter((line) => line.trim() !== '');
+      const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
       for (const line of lines) {
         if (line === 'data: [DONE]') {
           res.write(`event: done\ndata: [DONE]\n\n`);
@@ -57,17 +78,14 @@ app.get('/sse', async (req, res) => {
             res.write(`data: ${content}\n\n`);
           }
         } catch (err) {
-          console.error('Error al parsear:', err.message);
+          console.error('Error parsing JSON:', err.message);
         }
       }
     });
 
-    response.data.on('end', () => {
-      res.end();
-    });
-
+    response.data.on('end', () => res.end());
     response.data.on('error', (err) => {
-      console.error('Error en stream:', err.message);
+      console.error('Error en streaming:', err.message);
       res.write(`event: error\ndata: ${err.message}\n\n`);
       res.end();
     });
@@ -77,12 +95,12 @@ app.get('/sse', async (req, res) => {
       res.end();
     });
 
-  } catch (error) {
-    console.error('Error al conectar con Browserbase:', error.message);
-    res.status(500).json({ error: 'Error en el servidor de Browserbase' });
+  } catch (err) {
+    console.error('Error ejecutando tool:', err.message);
+    res.status(500).json({ error: 'Error ejecutando herramienta' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor SSE con Browserbase corriendo en http://localhost:${PORT}/sse`);
+  console.log(`🧠 MCP Browserbase SSE corriendo en http://localhost:${PORT}`);
 });
