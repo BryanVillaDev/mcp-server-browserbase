@@ -1,101 +1,124 @@
 // index.js
 import express from 'express';
 import cors from 'cors';
-import { Browserbase } from '@browserbasehq/sdk';
+import axios from 'axios';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(cors());
 app.use(express.json());
 
-// 🔹 GET /tools - Lista tools del proyecto
-app.get('/tools', async (req, res) => {
-  const { browserbase_api_key, browserbase_project_id } = req.query;
+const PORT = process.env.PORT || 3000;
+// Store active SSE sessions: session_id -> { res, heartbeat, browserbase_api_key, browserbase_project_id, openai_api_key }
+const sessions = new Map();
 
-  if (!browserbase_api_key || !browserbase_project_id) {
-    return res.status(400).json({ error: 'Faltan parámetros: api_key o project_id' });
+// 🔹 GET /sse - Inicia conexión SSE (no ejecuta ninguna tool todavía)
+app.get('/sse', (req, res) => {
+  const { browserbase_api_key, browserbase_project_id, openai_api_key, session_id } = req.query;
+  if (!browserbase_api_key || !browserbase_project_id || !openai_api_key || !session_id) {
+    return res.status(400).json({ error: 'Faltan parámetros: browserbase_api_key, browserbase_project_id, openai_api_key o session_id' });
   }
 
-  try {
-    const bb = new Browserbase(browserbase_api_key);
-    const tools = await bb.tools.list(browserbase_project_id);
-    res.json(tools);
-  } catch (err) {
-    console.error('❌ Error al obtener tools:', err);
-    res.status(500).json({ error: 'Error al listar herramientas', detail: err.message });
-  }
-});
-
-// 🔹 GET /sse - Ejecuta tool y responde en tiempo real
-app.get('/sse', async (req, res) => {
-  const { browserbase_api_key, browserbase_project_id, tool_id } = req.query;
-
-  if (!browserbase_api_key || !browserbase_project_id || !tool_id) {
-    return res.status(400).json({ error: 'Faltan parámetros: api_key, project_id o tool_id' });
-  }
-
+  // Cabeceras SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders && res.flushHeaders();
 
-  try {
-    const bb = new Browserbase(browserbase_api_key);
+  // Heartbeat para mantener viva la conexión
+  const heartbeat = setInterval(() => res.write(`:\n\n`), 30000);
 
-    const stream = await bb.chat.stream({
-      projectId: browserbase_project_id,
-      toolId: tool_id,
-      messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }]
-    });
+  // Guardar sesión
+  sessions.set(session_id, {
+    res,
+    heartbeat,
+    browserbase_api_key,
+    browserbase_project_id,
+    openai_api_key
+  });
 
-    for await (const message of stream) {
-      if (message === '[DONE]') {
-        res.write(`event: done\ndata: [DONE]\n\n`);
-        res.end();
-        return;
-      }
-
-      const content = message?.choices?.[0]?.delta?.content;
-      if (content) {
-        res.write(`data: ${content}\n\n`);
-      }
-    }
-
-    req.on('close', () => {
-      console.log('Cliente cerró la conexión');
-      res.end();
-    });
-
-  } catch (err) {
-    console.error('Error ejecutando tool:', err);
-    res.status(500).json({ error: 'Error ejecutando herramienta', detail: err.message });
-  }
+  // Limpiar al desconectar
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sessions.delete(session_id);
+    res.end();
+  });
 });
 
-// 🔹 POST /execute - Ejecuta tool y devuelve todo el resultado
-app.post('/execute', async (req, res) => {
-  const { browserbase_api_key, browserbase_project_id, tool_id, messages } = req.body;
-
-  if (!browserbase_api_key || !browserbase_project_id || !tool_id || !messages) {
-    return res.status(400).json({ error: 'Faltan parámetros: api_key, project_id, tool_id o messages' });
+// 🔹 POST /messages - Recibe mensajes de usuario y dispara streaming SSE
+app.post('/messages', async (req, res) => {
+  const { session_id, messages } = req.body;
+  if (!session_id || !messages) {
+    return res.status(400).json({ error: 'Faltan parámetros: session_id o messages' });
   }
 
-  try {
-    const bb = new Browserbase(browserbase_api_key);
+  const session = sessions.get(session_id);
+  if (!session) {
+    return res.status(400).json({ error: 'session_id inválido o conexión SSE no iniciada' });
+  }
 
-    const result = await bb.chat.run({
-      projectId: browserbase_project_id,
-      toolId: tool_id,
-      messages
+  const { res: sseRes, heartbeat, browserbase_api_key, browserbase_project_id, openai_api_key } = session;
+
+  try {
+    // Llamada a Browserbase chat completions con streaming
+    const response = await axios({
+      method: 'POST',
+      url: 'https://api.browserbase.com/v1/chat/completions',
+      headers: {
+        Authorization: `Bearer ${browserbase_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      responseType: 'stream',
+      data: {
+        project_id: browserbase_project_id,
+        stream: true,
+        openai_api_key,
+        messages
+      }
     });
 
-    res.json(result);
+    response.data.on('data', chunk => {
+      const lines = chunk.toString().split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        if (line === 'data: [DONE]') {
+          // Final del stream
+          clearInterval(heartbeat);
+          sseRes.write(`event: done\ndata: [DONE]\n\n`);
+          sseRes.end();
+          sessions.delete(session_id);
+          return;
+        }
+        const msg = line.replace(/^data: /, '');
+        try {
+          const parsed = JSON.parse(msg);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            sseRes.write(`data: ${content}\n\n`);
+          }
+        } catch {};
+      }
+    });
+
+    response.data.on('end', () => {
+      clearInterval(heartbeat);
+      sseRes.end();
+      sessions.delete(session_id);
+    });
+
+    response.data.on('error', err => {
+      clearInterval(heartbeat);
+      sseRes.write(`event: error\ndata: ${err.message}\n\n`);
+      sseRes.end();
+      sessions.delete(session_id);
+    });
+
+    // Respuesta inmediata al cliente que envía el mensaje
+    res.json({ status: 'streaming_started' });
   } catch (err) {
-    console.error('Error en ejecución sin stream:', err);
-    res.status(500).json({ error: 'Error al ejecutar la herramienta sin stream', detail: err.message });
+    console.error('Error en /messages:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Error iniciando stream', detail: err.message });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🧠 MCP Browserbase corriendo en http://localhost:${PORT}`);
+  console.log(`🧠 MCP clon SSE corriendo en http://localhost:${PORT}`);
 });
