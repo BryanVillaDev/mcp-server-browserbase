@@ -1,17 +1,20 @@
-# Imagen base con soporte para Node 18
-FROM node:18
+# Imagen base con soporte para ES Modules
+FROM node:20
 
-# Crear y usar directorio de trabajo
-WORKDIR /app
+# Crear directorio de trabajo
+WORKDIR /usr/src/app
 
-# Copiar los archivos del proyecto
-COPY . .
+# Copiar dependencias
+COPY package*.json ./
 
 # Instalar dependencias
 RUN npm install
 
-# Exponer el puerto en el que corre Express
+# Copiar el resto del código
+COPY . .
+
+# Exponer el puerto (usa el mismo que en tu index.js)
 EXPOSE 3000
 
-# Comando para iniciar el servidor
-CMD ["npm", "start"]
+# Comando por defecto
+CMD [ "npm", "start" ]
